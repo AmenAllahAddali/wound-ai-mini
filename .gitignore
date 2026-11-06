@@ -223,3 +223,5 @@ __marimo__/
 data/
 models/*.pth
 venv/
+outputs/
+test.png
