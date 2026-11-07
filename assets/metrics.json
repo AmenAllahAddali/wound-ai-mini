@@ -1,0 +1,8 @@
+{
+  "images_validation": 200,
+  "dice_moyen": 0.8485,
+  "iou_moyen": 0.7744,
+  "dice_images_avec_plaie": 0.8651,
+  "precision_pixels": 0.9287,
+  "rappel_pixels": 0.9043
+}
