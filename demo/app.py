@@ -18,6 +18,8 @@ threshold = st.sidebar.slider("Seuil de détection", 0.05, 0.95, 0.50, 0.05,
                               help="Probabilité minimale pour qu'un pixel soit considéré comme plaie")
 px_per_cm = st.sidebar.number_input("Pixels par cm (optionnel)", min_value=0.0, value=0.0, step=1.0,
                                     help="Si un repère de taille est connu sur la photo, donne la surface en cm²")
+explain = st.sidebar.checkbox("Afficher l'explication (Grad-CAM)", value=False,
+                              help="Carte de chaleur : zones sur lesquelles le modèle s'appuie (plus lent)")
 
 # État de l'API
 try:
@@ -45,11 +47,11 @@ if health is None:
     st.stop()
 
 # ---------------- Appel de l'API ----------------
-params = {"threshold": threshold}
+params = {"threshold": threshold, "explain": str(explain).lower()}
 if px_per_cm > 0:
     params["px_per_cm"] = px_per_cm
 
-with st.spinner("Analyse en cours..."):
+with st.spinner("Analyse en cours..." + (" (Grad-CAM : quelques secondes de plus)" if explain else "")):
     try:
         resp = requests.post(
             f"{api_url}/predict",
@@ -81,10 +83,15 @@ if "area_cm2" in m:
 
 # ---------------- Images ----------------
 st.subheader("🖼️ Résultat")
-col1, col2, col3 = st.columns(3)
-col1.image(uploaded.getvalue(), caption="Photo originale")
-col2.image(base64.b64decode(data["overlay_png_base64"]), caption="Plaie détectée (rouge) + cadre")
-col3.image(base64.b64decode(data["mask_png_base64"]), caption="Masque de segmentation")
+has_cam = "gradcam_png_base64" in data
+cols = st.columns(4 if has_cam else 3)
+cols[0].image(uploaded.getvalue(), caption="Photo originale")
+cols[1].image(base64.b64decode(data["overlay_png_base64"]), caption="Plaie détectée (rouge) + cadre")
+cols[2].image(base64.b64decode(data["mask_png_base64"]), caption="Masque de segmentation")
+if has_cam:
+    cols[3].image(base64.b64decode(data["gradcam_png_base64"]), caption="Grad-CAM (où le modèle regarde)")
+    st.caption("Grad-CAM : rouge/jaune = zones les plus utilisées par le modèle, bleu = zones ignorées. "
+               "Des activations parasites peuvent apparaître sur les bandes noires de l'image.")
 
 # ---------------- Détails ----------------
 with st.expander("Détails techniques (JSON)"):

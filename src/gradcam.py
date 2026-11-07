@@ -14,6 +14,20 @@ from pytorch_grad_cam.utils.model_targets import SemanticSegmentationTarget
 
 from src.predict import preprocess, THRESHOLD
 
+PADDING_LEVEL = 8  # pixels plus sombres que ça sur les 3 canaux = bande noire de remplissage
+
+
+def get_target_layer(model):
+    """
+    Couche analysée par Grad-CAM.
+    v1 : dernier bloc de l'encodeur (grille 16x16) -> trop grossier pour les petites plaies.
+    v2 : 3e bloc du décodeur (grille 128x128) -> carte bien plus précise.
+    """
+    blocks = getattr(model.decoder, "blocks", None)
+    if blocks is not None and len(blocks) >= 3:
+        return blocks[2]
+    return model.encoder.layer4[-1]
+
 
 def gradcam_overlay(model, image_rgb, threshold=THRESHOLD):
     """
@@ -33,12 +47,18 @@ def gradcam_overlay(model, image_rgb, threshold=THRESHOLD):
     if target_mask.sum() == 0:                         # aucune plaie prédite -> expliquer toute l'image
         target_mask = np.ones_like(target_mask)
 
-    # Couche analysée : dernier bloc de l'encodeur ResNet34
-    target_layers = [model.encoder.layer4[-1]]
-    with GradCAM(model=model, target_layers=target_layers) as cam:
+    with GradCAM(model=model, target_layers=[get_target_layer(model)]) as cam:
         heatmap = cam(input_tensor=x, targets=[SemanticSegmentationTarget(0, target_mask)])[0]
 
     heatmap = cv2.resize(heatmap, (w, h), interpolation=cv2.INTER_LINEAR)
+
+    # Les bandes noires ajoutées pour compléter l'image à 512x512 ne font pas partie de la photo :
+    # on n'y affiche pas de chaleur (sinon artefacts de bord).
+    padding = image_rgb.max(axis=2) < PADDING_LEVEL
+    heatmap[padding] = 0
+    if heatmap.max() > 0:
+        heatmap = heatmap / heatmap.max()
+
     overlay = show_cam_on_image(image_rgb.astype(np.float32) / 255.0, heatmap, use_rgb=True)
     return overlay, heatmap.astype(np.float32)
 
@@ -52,6 +72,7 @@ if __name__ == "__main__":
 
     image = read_image(sys.argv[1])
     model = load_model()
+    print("Couche Grad-CAM :", get_target_layer(model).__class__.__name__)
     overlay, _ = gradcam_overlay(model, image)
 
     os.makedirs("outputs", exist_ok=True)

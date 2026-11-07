@@ -1,10 +1,11 @@
 """
 API Wound-AI Mini
-Lancer depuis la racine du projet : uvicorn api.main:app --reload --port 8000
+Lancer depuis la racine du projet : uvicorn api.main:app --port 8000
 Documentation interactive : http://localhost:8000/docs
 """
 import os
 import base64
+import threading
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -15,9 +16,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.predict import load_model, predict_mask, read_image_bytes, MODEL_PATH
 from src.measure import measure_wound, make_overlay
+from src.gradcam import gradcam_overlay
 
 MAX_SIZE_MB = 10
 state = {}
+gradcam_lock = threading.Lock()  # Grad-CAM pose des "hooks" sur le modèle : une requête à la fois
 
 
 @asynccontextmanager
@@ -30,8 +33,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Wound-AI Mini API",
-    description="Segmentation de plaies (U-Net) + mesure de surface. Outil de démonstration, pas un dispositif médical.",
-    version="0.1.0",
+    description="Segmentation de plaies (U-Net) + mesure de surface + explicabilité (Grad-CAM). "
+                "Outil de démonstration, pas un dispositif médical.",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -56,7 +60,12 @@ def to_base64_png(img):
 
 @app.get("/")
 def root():
-    return {"name": "Wound-AI Mini API", "docs": "/docs", "health": "/health", "predict": "POST /predict"}
+    return {
+        "name": "Wound-AI Mini API",
+        "docs": "/docs",
+        "health": "/health",
+        "predict": "POST /predict (option ?explain=true pour le Grad-CAM)",
+    }
 
 
 @app.get("/health")
@@ -69,6 +78,7 @@ def predict(
     file: UploadFile = File(..., description="Photo de la plaie (PNG ou JPG)"),
     threshold: float = Query(0.5, ge=0.05, le=0.95, description="Seuil de probabilité plaie / fond"),
     px_per_cm: Optional[float] = Query(None, gt=0, description="Pixels pour 1 cm (optionnel, pour avoir des cm²)"),
+    explain: bool = Query(False, description="Ajouter la carte Grad-CAM (plus lent)"),
 ):
     data = file.file.read()
     if not data:
@@ -88,7 +98,7 @@ def predict(
     wound = mask > 0
     confidence = round(float(prob[wound].mean()), 3) if wound.any() else None
 
-    return {
+    response = {
         "filename": file.filename,
         "trained_model": os.path.exists(MODEL_PATH),
         "measurements": result,
@@ -96,3 +106,10 @@ def predict(
         "overlay_png_base64": to_base64_png(overlay),
         "mask_png_base64": to_base64_png(mask),
     }
+
+    if explain:
+        with gradcam_lock:
+            cam_overlay, _ = gradcam_overlay(state["model"], image, threshold=threshold)
+        response["gradcam_png_base64"] = to_base64_png(cam_overlay)
+
+    return response
