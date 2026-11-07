@@ -1,0 +1,13 @@
+venv/
+.venv/
+.git/
+__pycache__/
+*.pyc
+data/
+outputs/
+notebooks/
+assets/
+demo/
+test*.png
+*.zip
+.vscode/
